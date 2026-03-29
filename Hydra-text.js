@@ -1,343 +1,352 @@
-const VERSION = "0.1.0";
+(() => {
+    const VERSION = "2.0.0";
+    const ROOT = typeof window !== "undefined" ? window : globalThis;
 
-const DEFAULTS = {
-  font: "sans-serif",
-  fontStyle: "normal",
-  fontSize: "auto",
-  textAlign: "center",
-  fillStyle: "white",
-  strokeStyle: "white",
-  lineWidth: "2%",
-  lineJoin: "miter",
-  canvasResize: 2,
-  interpolation: "linear"
-};
+    const DEFAULTS = {
+        font: "sans-serif",
+        fontStyle: "normal",
+        fontSize: "auto",
+        textAlign: "center",
+        fillStyle: "white",
+        strokeStyle: "white",
+        lineWidth: "2%",
+        lineJoin: "miter",
+        canvasResize: 2,
+        interpolation: "linear"
+    };
 
-let installedHydra = null;
+    const STATE = ROOT.__hydraTextState || (ROOT.__hydraTextState = {
+        hydra: null,
+        scope: ROOT,
+        sourceCtor: null,
+        replaceHydraWrapped: false
+    });
 
-function getInstalledSynth() {
-  const synth = installedHydra?.synth || installedHydra;
-  if (!synth) {
-    throw new Error("[hydra-text] Extension is not installed yet. Call install(hydra) first.");
-  }
-  return synth;
-}
-
-function isPercentage(value) {
-  return String(value).endsWith("%");
-}
-
-function getPercentage(value) {
-  return Number(String(value).slice(0, -1)) / 100;
-}
-
-function getSourceConstructor(hydra) {
-  const source = hydra?.s?.[0];
-  if (!source) {
-    throw new Error("[hydra-text] Could not find hydra.s[0]. Load this after Hydra is initialized.");
-  }
-  return source.constructor;
-}
-
-function getCanvas(hydra) {
-  return hydra.canvas || hydra.synth?.canvas || document.querySelector("canvas");
-}
-
-function getDimensions(hydra) {
-  const canvas = getCanvas(hydra);
-  return {
-    width: hydra.width || hydra.synth?.width || canvas?.width || 1280,
-    height: hydra.height || hydra.synth?.height || canvas?.height || 720
-  };
-}
-
-function renderText(ctx, canvas, hydra, str, configInput, fill, stroke, fillAfter) {
-  const lines = String(str).split("\n");
-  const longestLine = lines.reduce((a, b) => (a.length > b.length ? a : b), "");
-  const config =
-    typeof configInput === "string"
-      ? { ...DEFAULTS, font: configInput }
-      : { ...DEFAULTS, ...(configInput || {}) };
-
-  const { width } = getDimensions(hydra);
-  const fontWithSize = (size) => `${config.fontStyle} ${size} ${config.font}`;
-
-  canvas.width = width;
-  ctx.font = fontWithSize("1px");
-
-  let padding = width / 20;
-  let textWidth = width - padding;
-  let fontSize = textWidth / Math.max(ctx.measureText(longestLine || " ").width, 1);
-
-  canvas.height = fontSize * 1.4 * Math.max(lines.length, 1);
-
-  if (isPercentage(config.fontSize)) {
-    fontSize *= getPercentage(config.fontSize);
-  } else if (config.fontSize !== "auto") {
-    fontSize = Number(String(config.fontSize).replace(/[^0-9.,]+/, "")) || fontSize;
-  }
-
-  const lineWidth = isPercentage(config.lineWidth)
-    ? fontSize * getPercentage(config.lineWidth)
-    : Number(config.lineWidth) || 0;
-
-  fontSize *= config.canvasResize;
-  canvas.width *= config.canvasResize;
-  canvas.height *= config.canvasResize;
-  textWidth *= config.canvasResize;
-  padding *= config.canvasResize;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  Object.assign(ctx, config, {
-    font: fontWithSize(`${fontSize}px`),
-    textBaseline: "middle",
-    lineWidth: lineWidth * config.canvasResize
-  });
-
-  let x = 0;
-  if (ctx.textAlign === "center") x = canvas.width / 2;
-  else if (ctx.textAlign === "left") x = padding / 2;
-  else if (ctx.textAlign === "right") x = canvas.width - padding / 2;
-
-  lines.forEach((line, i) => {
-    const y = (canvas.height / (lines.length + 1)) * (i + 1);
-    if (fill) ctx.fillText(line, x, y, textWidth);
-    if (stroke) ctx.strokeText(line, x, y, textWidth);
-    if (fillAfter) ctx.fillText(line, x, y, textWidth);
-  });
-
-  return config.interpolation;
-}
-
-function createSrcRelMask(hydra, synth) {
-  return function srcRelMask(tex) {
-    if (!Object.prototype.hasOwnProperty.call(tex, "src")) {
-      return synth.src(tex);
+    function isHydraCandidate(hydra) {
+        return Boolean(
+            hydra &&
+            (
+                hydra.regl ||
+                hydra.s?.[0] ||
+                hydra.synth?.regl ||
+                hydra.synth?.s?.[0]
+            )
+        );
     }
 
-    const canvas = getCanvas(hydra);
-    const canvasWidth = canvas?.clientWidth || canvas?.width || getDimensions(hydra).width;
-    const canvasHeight = canvas?.clientHeight || canvas?.height || getDimensions(hydra).height;
+    function normalizeHydra(hydra) {
+        if (!hydra) return null;
 
-    const w = () =>
-      tex.src?.width
-        ? tex.src.width / tex.src.height
-        : tex.src?.videoWidth
-          ? tex.src.videoWidth / tex.src.videoHeight
-          : 0;
+        const synth = hydra.synth || hydra;
+        const canvas = hydra.canvas || synth.canvas || document.querySelector("canvas");
 
-    const h = () =>
-      tex.src?.height
-        ? tex.src.height / tex.src.width
-        : tex.src?.videoHeight
-          ? tex.src.videoHeight / tex.src.videoWidth
-          : 0;
+        return Object.assign({}, hydra, {
+            synth,
+            s: hydra.s || synth.s,
+            regl: hydra.regl || synth.regl,
+            pb: hydra.pb || synth.pb,
+            width: hydra.width || synth.width || canvas?.width || canvas?.clientWidth || 0,
+            height: hydra.height || synth.height || canvas?.height || canvas?.clientHeight || 0,
+            canvas
+        });
+    }
 
-    const cw = () => canvasWidth / canvasHeight;
-    const ch = () => canvasHeight / canvasWidth;
+    function getHydra() {
+        const whereami = ROOT.location?.href?.includes("hydra.ojack.xyz")
+            ? "editor"
+            : ROOT.atom?.packages
+            ? "atom"
+            : "idk";
 
-    return synth
-      .src(tex)
-      .mask(synth.shape(4, 1, 0))
-      .scale(
-        1,
-        () => {
-          const canvasRatio = cw();
-          const sourceRatio = w();
-          return canvasRatio > sourceRatio ? sourceRatio / canvasRatio : 1;
-        },
-        () => {
-          const canvasRatio = ch();
-          const sourceRatio = h();
-          return canvasRatio > sourceRatio ? sourceRatio / canvasRatio : 1;
+        if (whereami === "editor") {
+            return normalizeHydra(ROOT.hydraSynth);
         }
-      );
-  };
-}
 
-function createReusableTextSource(hydra, synth, Source) {
-  const source = new Source({
-    regl: hydra.regl,
-    pb: hydra.pb,
-    width: getDimensions(hydra).width,
-    height: getDimensions(hydra).height
-  });
+        if (whereami === "atom") {
+            return normalizeHydra(
+                global.atom.packages.loadedPackages["atom-hydra"]?.mainModule?.main?.hydra
+            );
+        }
 
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  let initialized = false;
+        const hydra = [
+            ROOT.hydraSynth,
+            ROOT._hydra,
+            ROOT.hydra,
+            ROOT.h,
+            ROOT.H,
+            ROOT.hy,
+            globalThis.hydraSynth,
+            globalThis._hydra,
+            globalThis.hydra
+        ].find(isHydraCandidate);
 
-  const createTextMethod = (fill, stroke, fillAfter) => {
-    return function textMethod(str, config) {
-      const interpolation = renderText(ctx, canvas, hydra, str, config, fill, stroke, fillAfter);
+        return normalizeHydra(hydra);
+    }
 
-      if (!initialized) {
-        source.init({ src: canvas }, { min: interpolation, mag: interpolation });
-        source.dynamic = true;
-        initialized = true;
-      } else if (source.tex?.subimage) {
-        source.tex.subimage(canvas);
-      } else {
-        source.init({ src: canvas }, { min: interpolation, mag: interpolation });
-      }
+    function getHydraScope(hydra) {
+        if (!hydra) return ROOT;
+        if (hydra.sandbox?.makeGlobal || hydra.makeGlobal) return ROOT;
+        if (hydra.synth) return hydra.synth;
+        return ROOT;
+    }
 
-      return source;
-    };
-  };
+    function getSourceCtor(hydra) {
+        return hydra?.s?.[0]?.constructor || hydra?.synth?.s?.[0]?.constructor || null;
+    }
 
-  source.text = createTextMethod(true, false, false);
-  source.strokeText = createTextMethod(false, true, false);
-  source.fillStrokeText = createTextMethod(true, true, false);
-  source.strokeFillText = createTextMethod(false, true, true);
+    function ensureDefaults() {
+        ROOT.hydraText = Object.assign({}, DEFAULTS, ROOT.hydraText || {});
+        return ROOT.hydraText;
+    }
 
-  return source;
-}
+    function installSrcRelMask(scope) {
+        scope.srcRelMask = function(tex) {
+            const { hydra, scope: activeScope } = resolveHydraContext();
+            if (!tex?.hasOwnProperty("src")) return activeScope.src(tex);
 
-function createOneShot(hydra, synth, Source, srcRelMask, str, config, fill, stroke, fillAfter) {
-  const source = new Source({
-    regl: hydra.regl,
-    pb: hydra.pb,
-    width: getDimensions(hydra).width,
-    height: getDimensions(hydra).height
-  });
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  const interpolation = renderText(ctx, canvas, hydra, str, config, fill, stroke, fillAfter);
-  source.init({ src: canvas }, { min: interpolation, mag: interpolation });
-  return srcRelMask(source);
-}
+            const w = () =>
+                tex.src?.width
+                    ? tex.src.width / tex.src.height
+                    : tex.src?.videoWidth
+                    ? tex.src.videoWidth / tex.src.videoHeight
+                    : 0;
 
-function registerFunctions(hydra, synth) {
-  const Source = getSourceConstructor(hydra);
-  const srcRelMask = createSrcRelMask(hydra, synth);
+            const h = () =>
+                tex.src?.height
+                    ? tex.src.height / tex.src.width
+                    : tex.src?.videoHeight
+                    ? tex.src.videoHeight / tex.src.videoWidth
+                    : 0;
 
-  synth.srcRelMask = srcRelMask;
-  synth.createText = function createText() {
-    return createReusableTextSource(hydra, synth, Source);
-  };
-  synth.text = function text(str, config) {
-    return createOneShot(hydra, synth, Source, srcRelMask, str, config, true, false, false);
-  };
-  synth.strokeText = function strokeText(str, config) {
-    return createOneShot(hydra, synth, Source, srcRelMask, str, config, false, true, false);
-  };
-  synth.fillStrokeText = function fillStrokeText(str, config) {
-    return createOneShot(hydra, synth, Source, srcRelMask, str, config, true, true, false);
-  };
-  synth.strokeFillText = function strokeFillText(str, config) {
-    return createOneShot(hydra, synth, Source, srcRelMask, str, config, false, true, true);
-  };
+            const cw = () => hydra.canvas.clientWidth / hydra.canvas.clientHeight;
+            const ch = () => hydra.canvas.clientHeight / hydra.canvas.clientWidth;
 
-  if (typeof window !== "undefined") {
-    window.hydraText = { ...DEFAULTS };
-    window.srcRelMask = synth.srcRelMask;
-    window.createText = synth.createText;
-    window.text = synth.text;
-    window.strokeText = synth.strokeText;
-    window.fillStrokeText = synth.fillStrokeText;
-    window.strokeFillText = synth.strokeFillText;
-  }
-}
+            return activeScope
+                .src(tex)
+                .mask(activeScope.shape(4, 1, 0))
+                .scale(
+                    1,
+                    () => {
+                        const canvasWidthRatio = cw();
+                        const sourceWidthRatio = w();
+                        return canvasWidthRatio > sourceWidthRatio ? sourceWidthRatio / canvasWidthRatio : 1;
+                    },
+                    () => {
+                        const canvasHeightRatio = ch();
+                        const sourceHeightRatio = h();
+                        return canvasHeightRatio > sourceHeightRatio ? sourceHeightRatio / canvasHeightRatio : 1;
+                    }
+                );
+        };
+    }
 
-function install(hydra) {
-  const resolvedHydra = hydra?.synth ? hydra : hydra;
-  const synth = resolvedHydra?.synth || resolvedHydra;
+    function installHydraText(hydra = getHydra()) {
+        const normalized = normalizeHydra(hydra);
+        const sourceCtor = getSourceCtor(normalized);
 
-  if (!resolvedHydra || !synth) {
-    console.error("[hydra-text] Could not find Hydra or hydra.synth");
-    return false;
-  }
+        if (!normalized || !sourceCtor) {
+            throw new Error(
+                "[hydra-text] Could not find a compatible Hydra instance. Load this after Hydra is initialized."
+            );
+        }
 
-  if (!resolvedHydra.regl && synth.regl) resolvedHydra.regl = synth.regl;
-  if (!resolvedHydra.pb && synth.pb) resolvedHydra.pb = synth.pb;
-  if (!resolvedHydra.s && synth.s) resolvedHydra.s = synth.s;
-  if (!resolvedHydra.canvas) resolvedHydra.canvas = synth.canvas || document.querySelector("canvas");
-  if (!resolvedHydra.width || !resolvedHydra.height) {
-    const { width, height } = getDimensions(resolvedHydra);
-    resolvedHydra.width = width;
-    resolvedHydra.height = height;
-  }
+        const scope = getHydraScope(normalized);
 
-  if (!resolvedHydra.regl || !resolvedHydra.s?.[0]) {
-    console.error("[hydra-text] Hydra is missing required internals: regl or s[0]");
-    return false;
-  }
+        STATE.hydra = normalized;
+        STATE.scope = scope;
+        STATE.sourceCtor = sourceCtor;
 
-  installedHydra = resolvedHydra;
-  registerFunctions(resolvedHydra, synth);
-  console.log(`[hydra-text] Installed text extension v${VERSION}`);
-  return true;
-}
+        ROOT._hydra = normalized;
+        ROOT._hydraScope = scope;
+        ensureDefaults();
+        installSrcRelMask(scope);
+        installApi(scope);
+        wrapReplaceHydra();
 
-function getInstalledHydra() {
-  return installedHydra;
-}
+        return normalized;
+    }
 
-function findHydraGlobal() {
-  return (
-    (typeof window !== "undefined" && (
-      window.hydraSynth ||
-      window._hydra ||
-      window.hydra ||
-      window.h ||
-      window.H ||
-      window.hy
-    )) ||
-    null
-  );
-}
+    function resolveHydraContext() {
+        const latest = getHydra();
 
-function autoInstall() {
-  const hydra = findHydraGlobal();
-  if (!hydra) {
-    console.warn("[hydra-text] No Hydra global found for auto-install");
-    return false;
-  }
-  return install(hydra);
-}
+        if (!latest && STATE.hydra) {
+            return STATE;
+        }
 
-function srcRelMask(...args) {
-  return getInstalledSynth().srcRelMask(...args);
-}
+        const changed =
+            latest &&
+            (
+                STATE.hydra?.canvas !== latest.canvas ||
+                STATE.hydra?.regl !== latest.regl ||
+                STATE.hydra?.pb !== latest.pb
+            );
 
-function createText(...args) {
-  return getInstalledSynth().createText(...args);
-}
+        if (!STATE.hydra || changed) {
+            installHydraText(latest);
+        }
 
-function text(...args) {
-  return getInstalledSynth().text(...args);
-}
+        return STATE;
+    }
 
-function strokeText(...args) {
-  return getInstalledSynth().strokeText(...args);
-}
+    function isPercentage(value) {
+        return String(value).endsWith("%");
+    }
 
-function fillStrokeText(...args) {
-  return getInstalledSynth().fillStrokeText(...args);
-}
+    function getPercentage(value) {
+        return Number(String(value).slice(0, -1)) / 100;
+    }
 
-function strokeFillText(...args) {
-  return getInstalledSynth().strokeFillText(...args);
-}
+    function getHydraSize(hydra) {
+        const width = hydra.width || hydra.canvas?.width || hydra.canvas?.clientWidth || 0;
+        const height = hydra.height || hydra.canvas?.height || hydra.canvas?.clientHeight || 0;
+        return { width, height };
+    }
 
-export {
-  VERSION,
-  install,
-  autoInstall,
-  getInstalledHydra,
-  srcRelMask,
-  createText,
-  text,
-  strokeText,
-  fillStrokeText,
-  strokeFillText
-};
-export default install;
+    function renderText(ctx, canvas, hydra, str, configInput, fill, stroke, fillAfter) {
+        const text = String(str ?? "");
+        const lines = text.split("\n");
+        const longestLine = lines.reduce((longest, line) => longest.length > line.length ? longest : line, "");
 
-if (typeof window !== "undefined") {
-  try {
-    autoInstall();
-  } catch (error) {
-    console.warn("[hydra-text] Auto-install failed:", error);
-  }
-}
+        const baseConfig = typeof configInput === "string" ? { font: configInput } : (configInput || {});
+        const config = Object.assign({}, ensureDefaults(), baseConfig);
+        const { width } = getHydraSize(hydra);
+        const safeWidth = Math.max(width, 1);
+        const fontStyle = config.fontStyle;
+        const fontName = config.font;
+        config.textBaseline = "middle";
+
+        const fontWithSize = (size) => `${fontStyle} ${size} ${fontName}`;
+
+        canvas.width = safeWidth;
+        ctx.font = fontWithSize("1px");
+
+        let padding = safeWidth / 20;
+        let textWidth = safeWidth - padding;
+        let measuredWidth = ctx.measureText(longestLine || " ").width || 1;
+        let fontSize = textWidth / measuredWidth;
+        canvas.height = fontSize * 1.4 * Math.max(lines.length, 1);
+
+        if (isPercentage(config.fontSize)) {
+            fontSize *= getPercentage(config.fontSize);
+        } else if (config.fontSize !== "auto") {
+            fontSize = Number(String(config.fontSize).replace(/[^0-9.,]+/, "")) || fontSize;
+        }
+
+        if (isPercentage(config.lineWidth)) {
+            config.lineWidth = fontSize * getPercentage(config.lineWidth);
+        }
+
+        fontSize *= config.canvasResize;
+        canvas.width *= config.canvasResize;
+        canvas.height *= config.canvasResize;
+        textWidth *= config.canvasResize;
+        padding *= config.canvasResize;
+        config.lineWidth *= config.canvasResize;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        config.font = fontWithSize(`${fontSize}px`);
+        Object.assign(ctx, config);
+
+        let x = 0;
+        if (ctx.textAlign === "center") x = canvas.width / 2;
+        else if (ctx.textAlign === "left") x = padding / 2;
+        else if (ctx.textAlign === "right") x = canvas.width - padding / 2;
+
+        lines.forEach((line, index) => {
+            const y = (canvas.height / (lines.length + 1)) * (index + 1);
+            if (fill) ctx.fillText(line, x, y, textWidth);
+            if (stroke) ctx.strokeText(line, x, y, textWidth);
+            if (fillAfter) ctx.fillText(line, x, y, textWidth);
+        });
+
+        return config.interpolation;
+    }
+
+    function createSource() {
+        const { hydra, sourceCtor } = resolveHydraContext();
+        return new sourceCtor({
+            regl: hydra.regl,
+            pb: hydra.pb,
+            width: hydra.width,
+            height: hydra.height
+        });
+    }
+
+    function createTextFactory(fill, stroke, fillAfter) {
+        return function(str, config) {
+            const { hydra, scope } = resolveHydraContext();
+            const source = createSource();
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+
+            const interpolation = renderText(ctx, canvas, hydra, str, config, fill, stroke, fillAfter);
+            source.init({ src: canvas }, { min: interpolation, mag: interpolation });
+            return scope.srcRelMask(source);
+        };
+    }
+
+    function createDynamicTextSource() {
+        const { hydra } = resolveHydraContext();
+        const source = createSource();
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        let initialized = false;
+
+        const draw = (text, config, fill, stroke, fillAfter) => {
+            const interpolation = renderText(ctx, canvas, hydra, text, config, fill, stroke, fillAfter);
+
+            if (!initialized) {
+                source.init({ src: canvas }, { min: interpolation, mag: interpolation });
+                source.dynamic = true;
+                initialized = true;
+            } else {
+                source.tex.subimage(canvas);
+            }
+
+            return source;
+        };
+
+        source.text = (text, config) => draw(text, config, true, false, false);
+        source.strokeText = (text, config) => draw(text, config, false, true, false);
+        source.fillStrokeText = (text, config) => draw(text, config, true, true, false);
+        source.strokeFillText = (text, config) => draw(text, config, false, true, true);
+
+        return source;
+    }
+
+    function installApi(scope) {
+        scope.createText = function() {
+            resolveHydraContext();
+            return createDynamicTextSource();
+        };
+
+        scope.text = createTextFactory(true, false, false);
+        scope.strokeText = createTextFactory(false, true, false);
+        scope.fillStrokeText = createTextFactory(true, true, false);
+        scope.strokeFillText = createTextFactory(false, true, true);
+
+        ROOT.createText = scope.createText;
+        ROOT.text = scope.text;
+        ROOT.strokeText = scope.strokeText;
+        ROOT.fillStrokeText = scope.fillStrokeText;
+        ROOT.strokeFillText = scope.strokeFillText;
+        ROOT.installHydraText = installHydraText;
+        ROOT.refreshHydraText = () => installHydraText(getHydra());
+    }
+
+    function wrapReplaceHydra() {
+        if (STATE.replaceHydraWrapped) return;
+        if (typeof ROOT.replaceHydra !== "function") return;
+
+        const originalReplaceHydra = ROOT.replaceHydra;
+        ROOT.replaceHydra = async function(...args) {
+            const hydra = await originalReplaceHydra.apply(this, args);
+            installHydraText(hydra);
+            return hydra;
+        };
+        STATE.replaceHydraWrapped = true;
+    }
+
+    installHydraText();
+    console.log(`[hydra-text] Extension loaded v${VERSION}`);
+})();
