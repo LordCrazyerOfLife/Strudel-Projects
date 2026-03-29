@@ -15,6 +15,14 @@ const DEFAULTS = {
 
 let installedHydra = null;
 
+function getInstalledSynth() {
+  const synth = installedHydra?.synth || installedHydra;
+  if (!synth) {
+    throw new Error("[hydra-text] Extension is not installed yet. Call install(hydra) first.");
+  }
+  return synth;
+}
+
 function isPercentage(value) {
   return String(value).endsWith("%");
 }
@@ -265,5 +273,71 @@ function getInstalledHydra() {
   return installedHydra;
 }
 
-export { VERSION, install, getInstalledHydra };
+function findHydraGlobal() {
+  return (
+    (typeof window !== "undefined" && (
+      window.hydraSynth ||
+      window._hydra ||
+      window.hydra ||
+      window.h ||
+      window.H ||
+      window.hy
+    )) ||
+    null
+  );
+}
+
+function autoInstall() {
+  const hydra = findHydraGlobal();
+  if (!hydra) {
+    console.warn("[hydra-text] No Hydra global found for auto-install");
+    return false;
+  }
+  return install(hydra);
+}
+
+function srcRelMask(...args) {
+  return getInstalledSynth().srcRelMask(...args);
+}
+
+function createText(...args) {
+  return getInstalledSynth().createText(...args);
+}
+
+function text(...args) {
+  return getInstalledSynth().text(...args);
+}
+
+function strokeText(...args) {
+  return getInstalledSynth().strokeText(...args);
+}
+
+function fillStrokeText(...args) {
+  return getInstalledSynth().fillStrokeText(...args);
+}
+
+function strokeFillText(...args) {
+  return getInstalledSynth().strokeFillText(...args);
+}
+
+export {
+  VERSION,
+  install,
+  autoInstall,
+  getInstalledHydra,
+  srcRelMask,
+  createText,
+  text,
+  strokeText,
+  fillStrokeText,
+  strokeFillText
+};
 export default install;
+
+if (typeof window !== "undefined") {
+  try {
+    autoInstall();
+  } catch (error) {
+    console.warn("[hydra-text] Auto-install failed:", error);
+  }
+}
